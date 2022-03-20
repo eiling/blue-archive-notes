@@ -20,17 +20,34 @@ add_executable(
         src/cpp/Utils.cpp
         lib/glad/glad.h
         lib/glad/glad.c
-        lib/wacom-wintab/MSGPACK.H
-        lib/wacom-wintab/PKTDEF.H
-        lib/wacom-wintab/WINTAB.H
 )
 target_link_libraries(blue_archive_notes glfw opengl32)
 
 add_custom_command(
-        OUTPUT glsl/vertex.glsl glsl/fragment.glsl
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/vertex.glsl glsl/vertex.glsl
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/fragment.glsl glsl/fragment.glsl
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/vertex.glsl ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/fragment.glsl
+        OUTPUT glsl/vertex.glsl glsl/fragment.glsl glsl/backgroundVertex.glsl glsl/backgroundFragment.glsl
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/vertex.glsl glsl/vertex.glsl
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/fragment.glsl glsl/fragment.glsl
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/backgroundVertex.glsl glsl/backgroundVertex.glsl
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/backgroundFragment.glsl glsl/backgroundFragment.glsl
+        DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/vertex.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/fragment.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/backgroundVertex.glsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/glsl/backgroundFragment.glsl
 )
-add_custom_target(shaders DEPENDS glsl/vertex.glsl glsl/fragment.glsl)
+add_custom_target(shaders DEPENDS glsl/vertex.glsl glsl/fragment.glsl glsl/backgroundVertex.glsl glsl/backgroundFragment.glsl)
 add_dependencies(blue_archive_notes shaders)
+
+add_custom_command(
+        OUTPUT assets/img/04.png
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/assets/img/04.png assets/img/04.png
+        DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/assets/img/04.png
+)
+add_custom_target(assets DEPENDS assets/img/04.png)
+add_dependencies(blue_archive_notes assets)

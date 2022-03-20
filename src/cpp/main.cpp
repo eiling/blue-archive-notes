@@ -1,5 +1,6 @@
 #define GLFW_INCLUDE_NONE
 #define GLFW_EXPOSE_NATIVE_WIN32
+#define STB_IMAGE_IMPLEMENTATION
 
 #define PACKETDATA (PK_X | PK_Y | PK_BUTTONS | PK_NORMAL_PRESSURE | PK_TANGENT_PRESSURE | PK_TIME)
 #define PACKETMODE PK_BUTTONS
@@ -10,14 +11,15 @@
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 #include <wacom-wintab/PKTDEF.H>
+#include <stb_image.h>
 
 #include <cmath>
 #include <iostream>
 #include <fstream>
 #include <vector>
 
-#define WIDTH 800
-#define HEIGHT 600
+#define WIDTH 1600
+#define HEIGHT 920
 #define FRAMERATE 120
 #define MAX_PACKETS 20
 
@@ -27,6 +29,8 @@ struct st_shaderInfo {
 } shaders[] = {
         {GL_VERTEX_SHADER,   "glsl/vertex.glsl"},
         {GL_FRAGMENT_SHADER, "glsl/fragment.glsl"},
+        {GL_VERTEX_SHADER,   "glsl/backgroundVertex.glsl"},
+        {GL_FRAGMENT_SHADER, "glsl/backgroundFragment.glsl"},
 };
 
 struct st_inkData {
@@ -47,6 +51,8 @@ struct st_triangle {
 };
 
 const double timePerFrame = 1.0 / FRAMERATE;
+bool shouldClearInk = false;
+int maxInkSize = 50;
 
 int createShader(unsigned int *shader, unsigned int type, const char *file) {
     *shader = glCreateShader(type);
@@ -101,19 +107,23 @@ int createAndLinkProgram(unsigned int *program, st_shaderInfo *shaderInfo, int s
     return shaderStatus && success;
 }
 
-void processInput(GLFWwindow *window) {
-    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
-        glfwSetWindowShouldClose(window, true);
-    }
-}
-
 void errorCallback(int error, const char *description) {
     std::cout << "Code: " << error << std::endl;
     std::cout << description << std::endl;
 }
 
-st_point
-canvasPointFromPacketCoords(int raw_x, int raw_y, int window_x, int window_y, int window_w, int window_h, float scale) {
+void processInput(GLFWwindow *window) {
+    if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, true);
+    }
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+        shouldClearInk = true;
+    }
+}
+
+st_point canvasPointFromPacketCoords(
+        int raw_x, int raw_y, int window_x, int window_y, int window_w, int window_h, float scale
+) {
     float x_canvas = ((float) (raw_x - window_x) - (float) window_w / 2) * scale;
     float y_canvas = -((float) (raw_y - window_y) - (float) window_h / 2) * scale;
 
@@ -122,12 +132,6 @@ canvasPointFromPacketCoords(int raw_x, int raw_y, int window_x, int window_y, in
 
 float inkRadiusFromPressure(float pressure, float maxPressure, float maxSize) {
     return pressure * maxSize / maxPressure;
-}
-
-st_point toOGL(st_point p) {
-    double glx = p.x / ((double) WIDTH / 2);
-    double gly = p.y / ((double) HEIGHT / 2);
-    return {static_cast<float>(glx), static_cast<float>(gly)};
 }
 
 int main() {
@@ -171,6 +175,13 @@ int main() {
         return -1;
     }
 
+    unsigned int bgProgram;
+    if (!createAndLinkProgram(&bgProgram, shaders + 2, 2)) {
+        std::cout << "Failed to create program" << std::endl;
+        glfwTerminate();
+        return -1;
+    }
+
     if (!LoadWintab()) {
         std::cout << "Failed to initialize WINTAB" << std::endl;
         glfwTerminate();
@@ -198,7 +209,7 @@ int main() {
 
         lcMine.lcPktData = PACKETDATA;
         lcMine.lcOptions |= CXO_MESSAGES;
-        lcMine.lcOptions |= CXO_SYSTEM;    // move system cursor
+        lcMine.lcOptions |= CXO_SYSTEM;  // move system cursor
         lcMine.lcPktMode = PACKETMODE;
         lcMine.lcMoveMask = PACKETDATA;
         lcMine.lcBtnUpMask = lcMine.lcBtnDnMask;
@@ -225,27 +236,63 @@ int main() {
         UnloadWintab();
     }
 
-    std::vector<st_triangle> triangles;
-
     unsigned int vao, vbo;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
 
     glBindVertexArray(vao);
-
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *) nullptr);
 
+    unsigned int bg_vao, bg_vbo, bg_texture;
+    glGenVertexArrays(1, &bg_vao);
+    glGenBuffers(1, &bg_vbo);
+    glGenTextures(1, &bg_texture);
+
+    glBindVertexArray(bg_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, bg_vbo);
+    glBindTexture(GL_TEXTURE_2D, bg_texture);
+
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *) nullptr);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *) (2 * sizeof(float)));
+
+    const float bg_vertices[] = {
+            -1, 1, 0, 1,
+            -1, -1, 0, 0,
+            1, -1, 1, 0,
+            -1, 1, 0, 1,
+            1, -1, 1, 0,
+            1, 1, 1, 1
+    };
+    glBufferData(GL_ARRAY_BUFFER, sizeof(bg_vertices), bg_vertices, GL_STATIC_DRAW);
+
+    int bgWidth, bgHeight, bgChannels;
+    stbi_set_flip_vertically_on_load(true);
+    unsigned char *data = stbi_load("assets/img/04.png", &bgWidth, &bgHeight, &bgChannels, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, bgWidth, bgHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    stbi_image_free(data);
+
+    std::vector<st_triangle> triangles;
     std::vector<st_inkData> inkData;
     bool strokeOngoing = false;
     bool strokeStart = true;
 
     double lastRender = 0;
     while (!glfwWindowShouldClose(window)) {
+        const double now = glfwGetTime();
+
         processInput(window);
 
-        const double now = glfwGetTime();
+        if (shouldClearInk) {
+            inkData.clear();
+            triangles.clear();
+            shouldClearInk = false;
+        }
 
         PACKET packets[MAX_PACKETS];
         int numPackets = gpWTPacketsGet(hctx, MAX_PACKETS, (LPVOID) packets);
@@ -272,7 +319,7 @@ int main() {
                 st_point p = canvasPointFromPacketCoords(
                         pkt.pkX, pkt.pkY, window_x, window_y, window_w, window_h, 1
                 );
-                float inkRadius = inkRadiusFromPressure(pkt.pkNormalPressure, pressure.axMax, 10);
+                float inkRadius = inkRadiusFromPressure(pkt.pkNormalPressure, pressure.axMax, (float) maxInkSize);
                 st_inkData ink = {p.x, p.y, inkRadius};
 
                 if (strokeOngoing) {
@@ -283,8 +330,7 @@ int main() {
                     float y_dir = ink.y - last.y;
                     float d2 = x_dir * x_dir + y_dir * y_dir;
                     float d = std::sqrt(d2);
-                    std::cout << "distance: " << d << std::endl;
-                    if (d <= 5) {  // TODO does this value depend on the scale?
+                    if (d <= inkRadius) {  // TODO I'm not sure I understand why the ink size goes here
                         continue;
                     }
 
@@ -296,16 +342,28 @@ int main() {
                     y_dir = temp;
 
                     // get points for the triangles
-                    st_point last_positive;
-                    st_point last_negative;
+                    st_point last_positive = {last.x + x_dir * last.r, last.y + y_dir * last.r};
+                    st_point last_negative = {last.x - x_dir * last.r, last.y - y_dir * last.r};
                     if (strokeStart) {
-                        last_positive = {last.x + x_dir * last.r, last.y + y_dir * last.r};
-                        last_negative = {last.x - x_dir * last.r, last.y - y_dir * last.r};
+                        // last_positive = {last.x + x_dir * last.r, last.y + y_dir * last.r};
+                        // last_negative = {last.x - x_dir * last.r, last.y - y_dir * last.r};
                         strokeStart = false;
                     } else {
                         st_triangle lastTriangle = triangles.back();
-                        last_positive = lastTriangle.p3;
-                        last_negative = lastTriangle.p2;
+                        float dx1 = last_positive.x - lastTriangle.p3.x;
+                        float dy1 = last_positive.y - lastTriangle.p3.y;
+                        float dd1 = dx1 * dx1 + dy1 * dy1;
+
+                        float dx2 = last_positive.x - lastTriangle.p2.x;
+                        float dy2 = last_positive.y - lastTriangle.p2.y;
+                        float dd2 = dx2 * dx2 + dy2 * dy2;
+                        if (dd1 < dd2) {
+                            last_positive = lastTriangle.p3;
+                            last_negative = lastTriangle.p2;
+                        } else {
+                            last_positive = lastTriangle.p2;
+                            last_negative = lastTriangle.p3;
+                        }
                     }
                     st_point ink_positive = {ink.x + x_dir * ink.r, ink.y + y_dir * ink.r};
                     st_point ink_negative = {ink.x - x_dir * ink.r, ink.y - y_dir * ink.r};
@@ -326,17 +384,25 @@ int main() {
             int window_w, window_h;
             glfwGetWindowSize(window, &window_w, &window_h);
 
-            glUniform1i(1, window_w);
-            glUniform1i(2, window_h);
-            glUniform1f(3, 1);
-
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            glUseProgram(bgProgram);
+            glBindVertexArray(bg_vao);
+            glBindBuffer(GL_ARRAY_BUFFER, bg_vbo);
+            glBindTexture(GL_TEXTURE_2D, bg_texture);
+
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            glUseProgram(mainProgram);
+            glBindVertexArray(vao);
+            glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
             glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 2 * 3 * triangles.size(), triangles.data(),
                          GL_STATIC_DRAW);
 
-            glUseProgram(mainProgram);
-            glBindVertexArray(vao);
+            glUniform1i(1, window_w);
+            glUniform1i(2, window_h);
+            glUniform1f(3, 1);
 
             glDrawArrays(GL_TRIANGLES, 0, 3 * triangles.size());
 
@@ -347,6 +413,7 @@ int main() {
     }
 
     glDeleteProgram(mainProgram);
+    glDeleteProgram(bgProgram);
 
     gpWTClose(hctx);
     UnloadWintab();
