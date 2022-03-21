@@ -18,8 +18,9 @@
 #include <fstream>
 #include <vector>
 
-#define WIDTH 1600
-#define HEIGHT 920
+// match aspect ratio of the texture (2526x1787)
+#define WIDTH 1272
+#define HEIGHT 900
 #define FRAMERATE 120
 #define MAX_PACKETS 20
 
@@ -52,7 +53,7 @@ struct st_triangle {
 
 const double timePerFrame = 1.0 / FRAMERATE;
 bool shouldClearInk = false;
-int maxInkSize = 50;
+int maxInkSize = 5;
 
 int createShader(unsigned int *shader, unsigned int type, const char *file) {
     *shader = glCreateShader(type);
@@ -255,6 +256,19 @@ int main() {
     glBindBuffer(GL_ARRAY_BUFFER, bg_vbo);
     glBindTexture(GL_TEXTURE_2D, bg_texture);
 
+    int bgWidth, bgHeight, bgChannels;
+    stbi_set_flip_vertically_on_load(true);
+    unsigned char *data = stbi_load("assets/img/04.png", &bgWidth, &bgHeight, &bgChannels, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, bgWidth, bgHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    stbi_image_free(data);
+
+    // default values require mipmaps so we define these
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *) nullptr);
@@ -269,13 +283,6 @@ int main() {
             1, 1, 1, 1
     };
     glBufferData(GL_ARRAY_BUFFER, sizeof(bg_vertices), bg_vertices, GL_STATIC_DRAW);
-
-    int bgWidth, bgHeight, bgChannels;
-    stbi_set_flip_vertically_on_load(true);
-    unsigned char *data = stbi_load("assets/img/04.png", &bgWidth, &bgHeight, &bgChannels, 0);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, bgWidth, bgHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-    stbi_image_free(data);
 
     std::vector<st_triangle> triangles;
     std::vector<st_inkData> inkData;
