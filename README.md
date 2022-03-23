@@ -1,6 +1,6 @@
 # Blue Archive Notes
 
-Small notes app inspired by the assests from the Blue Archive 100 days celebration (https://bluearchive.nexon.com/events/2022/02/100days).
+Small notes app inspired by the assets from the Blue Archive 100 days celebration (https://bluearchive.nexon.com/events/2022/02/100days).
 
 Not affiliated in any way with Blue Archive. This is just a fan project.
 
