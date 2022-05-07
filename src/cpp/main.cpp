@@ -315,7 +315,16 @@ int main() {
             1, -1, 1, 0,
             1, 1, 1, 1
     };
-    glBufferData(GL_ARRAY_BUFFER, sizeof(bg_vertices), bg_vertices, GL_STATIC_DRAW);
+    // glBufferData(GL_ARRAY_BUFFER, sizeof(bg_vertices), bg_vertices, GL_STATIC_DRAW);
+
+    const float brush_vertices[] = {
+            (525 - 100) * 2. / WIDTH, (340 + 100) * 2. / HEIGHT, 0, 1,
+            (525 - 100) * 2. / WIDTH, (340 - 100) * 2. / HEIGHT, 0, 0,
+            (525 + 100) * 2. / WIDTH, (340 - 100) * 2. / HEIGHT, 1, 0,
+            (525 - 100) * 2. / WIDTH, (340 + 100) * 2. / HEIGHT, 0, 1,
+            (525 + 100) * 2. / WIDTH, (340 - 100) * 2. / HEIGHT, 1, 0,
+            (525 + 100) * 2. / WIDTH, (340 + 100) * 2. / HEIGHT, 1, 1
+    };
 
     std::vector<st_triangle> triangles;
     std::vector<std::vector<st_inkData>> strokes;
@@ -384,7 +393,7 @@ int main() {
             glBindVertexArray(bg_vao);
             glBindBuffer(GL_ARRAY_BUFFER, bg_vbo);
             glBindTexture(GL_TEXTURE_2D, bg_texture);
-
+            glBufferData(GL_ARRAY_BUFFER, sizeof(bg_vertices), bg_vertices, GL_STATIC_DRAW);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
             glUseProgram(mainProgram);
@@ -446,6 +455,13 @@ int main() {
                     triangles.clear();
                 }
             }
+
+            glUseProgram(bgProgram);
+            glBindVertexArray(bg_vao);
+            glBindBuffer(GL_ARRAY_BUFFER, bg_vbo);
+            glBindTexture(GL_TEXTURE_2D, brush_texture);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(brush_vertices), brush_vertices, GL_STATIC_DRAW);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
 
             glfwSwapBuffers(window);
 
