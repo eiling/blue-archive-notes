@@ -23,6 +23,8 @@
 #define HEIGHT 900
 #define FRAMERATE 60
 #define MAX_PACKETS 20
+#define BRUSH_TEX_SIZE 256
+#define BRUSH_RADIUS 100  // percent
 
 struct st_shaderInfo {
     unsigned int type;
@@ -47,8 +49,11 @@ struct st_vec2 {
 
 struct st_triangle {
     st_vec2 p1;
+    float p1_i;
     st_vec2 p2;
+    float p2_i;
     st_vec2 p3;
+    float p3_i;
 };
 
 const double timePerFrame = 1.0 / FRAMERATE;
@@ -239,6 +244,45 @@ int main() {
         UnloadWintab();
     }
 
+    unsigned int bg_texture, brush_texture;
+    glGenTextures(1, &bg_texture);
+    glBindTexture(GL_TEXTURE_2D, bg_texture);
+    // default values require mipmaps so we define these
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    int bgWidth, bgHeight, bgChannels;
+    stbi_set_flip_vertically_on_load(true);
+    unsigned char *bg_data = stbi_load("assets/img/04.png", &bgWidth, &bgHeight, &bgChannels, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, bgWidth, bgHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, bg_data);
+    stbi_image_free(bg_data);
+
+    glGenTextures(1, &brush_texture);
+    glBindTexture(GL_TEXTURE_2D, brush_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    unsigned char *brush_data = (unsigned char *) malloc(BRUSH_TEX_SIZE * BRUSH_TEX_SIZE);
+    const int radius_squared = 1L * BRUSH_TEX_SIZE * BRUSH_RADIUS * BRUSH_TEX_SIZE * BRUSH_RADIUS / (2 * 100 * 2 * 100);
+    for (int i = 0; i < BRUSH_TEX_SIZE; ++i) {
+        for (int j = 0; j < BRUSH_TEX_SIZE; ++j) {
+            const int x = i - BRUSH_TEX_SIZE / 2;
+            const int y = j - BRUSH_TEX_SIZE / 2;
+            const int dist_squared = x * x + y * y;
+            const int val = 255 - dist_squared * 256 / radius_squared;
+            brush_data[i + j * BRUSH_TEX_SIZE] = val < 0 ? 0 : val > 255 ? 255: val;
+        }
+    }
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, BRUSH_TEX_SIZE, BRUSH_TEX_SIZE, 0, GL_RED, GL_UNSIGNED_BYTE, brush_data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    free(brush_data);
+
     unsigned int vao, vbo;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -247,29 +291,16 @@ int main() {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *) nullptr);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *) nullptr);
+    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *) (2 * sizeof(float)));
 
-    unsigned int bg_vao, bg_vbo, bg_texture;
+    unsigned int bg_vao, bg_vbo;
     glGenVertexArrays(1, &bg_vao);
     glGenBuffers(1, &bg_vbo);
-    glGenTextures(1, &bg_texture);
 
     glBindVertexArray(bg_vao);
     glBindBuffer(GL_ARRAY_BUFFER, bg_vbo);
-    glBindTexture(GL_TEXTURE_2D, bg_texture);
-
-    int bgWidth, bgHeight, bgChannels;
-    stbi_set_flip_vertically_on_load(true);
-    unsigned char *data = stbi_load("assets/img/04.png", &bgWidth, &bgHeight, &bgChannels, 0);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, bgWidth, bgHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-    stbi_image_free(data);
-
-    // default values require mipmaps so we define these
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
@@ -359,10 +390,11 @@ int main() {
             glUseProgram(mainProgram);
             glBindVertexArray(vao);
             glBindBuffer(GL_ARRAY_BUFFER, vbo);
+            glBindTexture(GL_TEXTURE_2D, brush_texture);
 
-            glUniform1i(1, window_w);
-            glUniform1i(2, window_h);
-            glUniform1f(3, 1);
+            glUniform1i(0, window_w);
+            glUniform1i(1, window_h);
+            glUniform1f(2, 1);
 
             for (int i = 0; i < strokes.size(); i++) {
                 // put triangles for each stroke
@@ -376,8 +408,8 @@ int main() {
                         st_vec2 p2 = {ink.x - half_size, ink.y - half_size};
                         st_vec2 p3 = {ink.x + half_size, ink.y - half_size};
                         st_vec2 p4 = {ink.x + half_size, ink.y + half_size};
-                        triangles.push_back({p1, p2, p3});
-                        triangles.push_back({p1, p3, p4});
+                        triangles.push_back({p1, 1, p2, 2, p3, 3});
+                        triangles.push_back({p1, 1, p3, 3, p4, 4});
                     }
 
                     float leftoverDistance = 0;
@@ -400,15 +432,15 @@ int main() {
                             st_vec2 p2 = {x - half_size, y - half_size};
                             st_vec2 p3 = {x + half_size, y - half_size};
                             st_vec2 p4 = {x + half_size, y + half_size};
-                            triangles.push_back({p1, p2, p3});
-                            triangles.push_back({p1, p3, p4});
+                            triangles.push_back({p1, 1, p2, 2, p3, 3});
+                            triangles.push_back({p1, 1, p3, 3, p4, 4});
 
                             count++;
                         }
                         leftoverDistance = dist - spacing * (float) (count - 1);
                     }
 
-                    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 2 * 3 * triangles.size(), triangles.data(),
+                    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * 3 * triangles.size(), triangles.data(),
                                  GL_STATIC_DRAW);
                     glDrawArrays(GL_TRIANGLES, 0, 3 * triangles.size());
                     triangles.clear();
@@ -417,9 +449,9 @@ int main() {
 
             glfwSwapBuffers(window);
 
-            std::cout << -lastRender + glfwGetTime() << std::endl;
+            // std::cout << -lastRender + glfwGetTime() << std::endl;
         } else {
-            std::cout << "skip" << std::endl;
+            // std::cout << "skip" << std::endl;
         }
 
         glfwPollEvents();
