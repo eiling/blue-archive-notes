@@ -173,9 +173,6 @@ int main() {
 
     std::cout << "GLVersion: " << GLVersion.major << "." << GLVersion.minor << std::endl;
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
     unsigned int mainProgram;
     if (!createAndLinkProgram(&mainProgram, shaders, 2)) {
         std::cout << "Failed to create program" << std::endl;
@@ -186,12 +183,15 @@ int main() {
     unsigned int bgProgram;
     if (!createAndLinkProgram(&bgProgram, shaders + 2, 2)) {
         std::cout << "Failed to create program" << std::endl;
+        glDeleteProgram(mainProgram);
         glfwTerminate();
         return -1;
     }
 
     if (!LoadWintab()) {
         std::cout << "Failed to initialize WINTAB" << std::endl;
+        glDeleteProgram(mainProgram);
+        glDeleteProgram(bgProgram);
         glfwTerminate();
         return -1;
     }
@@ -241,12 +241,20 @@ int main() {
     }
 
     if (!hctx) {
+        std::cout << "Failed to initialize WINTAB context" << std::endl;
         UnloadWintab();
+        glDeleteProgram(mainProgram);
+        glDeleteProgram(bgProgram);
+        glfwTerminate();
+        return -1;
     }
 
-    unsigned int bg_texture, brush_texture;
-    glGenTextures(1, &bg_texture);
-    glBindTexture(GL_TEXTURE_2D, bg_texture);
+    glEnable(GL_BLEND);
+    glClearColor(0, 0, 0, 0);
+
+    unsigned int bgTexture, brushTexture, inkLayerTexture;
+    glGenTextures(1, &bgTexture);
+    glBindTexture(GL_TEXTURE_2D, bgTexture);
     // default values require mipmaps so we define these
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -260,8 +268,8 @@ int main() {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, bgWidth, bgHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, bg_data);
     stbi_image_free(bg_data);
 
-    glGenTextures(1, &brush_texture);
-    glBindTexture(GL_TEXTURE_2D, brush_texture);
+    glGenTextures(1, &brushTexture);
+    glBindTexture(GL_TEXTURE_2D, brushTexture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -283,6 +291,34 @@ int main() {
     glGenerateMipmap(GL_TEXTURE_2D);
     free(brush_data);
 
+    glGenTextures(1, &inkLayerTexture);
+    glBindTexture(GL_TEXTURE_2D, inkLayerTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, bgWidth, bgHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    unsigned int inkingFbo;
+    glGenFramebuffers(1, &inkingFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, inkingFbo);
+
+    // make sure the thing is empty
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, inkLayerTexture, 0);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        std::cout << "Inking FRAMEBUFFER not complete" << std::endl;
+        UnloadWintab();
+        glDeleteFramebuffers(1, &inkingFbo);
+        glDeleteProgram(mainProgram);
+        glDeleteProgram(bgProgram);
+        glfwTerminate();
+        return -1;
+    }
+
     unsigned int vao, vbo;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -295,19 +331,19 @@ int main() {
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *) nullptr);
     glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *) (2 * sizeof(float)));
 
-    unsigned int bg_vao, bg_vbo;
-    glGenVertexArrays(1, &bg_vao);
-    glGenBuffers(1, &bg_vbo);
+    unsigned int bgVao, bgVbo;
+    glGenVertexArrays(1, &bgVao);
+    glGenBuffers(1, &bgVbo);
 
-    glBindVertexArray(bg_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, bg_vbo);
+    glBindVertexArray(bgVao);
+    glBindBuffer(GL_ARRAY_BUFFER, bgVbo);
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *) nullptr);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *) (2 * sizeof(float)));
 
-    const float bg_vertices[] = {
+    const float bgVertices[] = {
             -1, 1, 0, 1,
             -1, -1, 0, 0,
             1, -1, 1, 0,
@@ -315,7 +351,7 @@ int main() {
             1, -1, 1, 0,
             1, 1, 1, 1
     };
-    // glBufferData(GL_ARRAY_BUFFER, sizeof(bg_vertices), bg_vertices, GL_STATIC_DRAW);
+    // glBufferData(GL_ARRAY_BUFFER, sizeof(bgVertices), bgVertices, GL_STATIC_DRAW);
 
     const float brush_vertices[] = {
             (525 - 100) * 2. / WIDTH, (340 + 100) * 2. / HEIGHT, 0, 1,
@@ -327,19 +363,38 @@ int main() {
     };
 
     std::vector<st_triangle> triangles;
-    std::vector<std::vector<st_inkData>> strokes;
+    bool stroking = false;
+    float leftoverDistance = 0;
+    st_inkData prev = {};
 
-    std::vector<st_inkData> *currentStroke = nullptr;
     double lastRender = 0;
     while (!glfwWindowShouldClose(window)) {
         const double now = glfwGetTime();
 
+        int window_x, window_y, window_w, window_h;
+        glfwGetWindowPos(window, &window_x, &window_y);
+        glfwGetWindowSize(window, &window_w, &window_h);
+
         processInput(window);
 
+        glBindFramebuffer(GL_FRAMEBUFFER, inkingFbo);
+        glViewport(0, 0, bgWidth, bgHeight);
+
         if (shouldClearInk) {
-            strokes.clear();
+            glClear(GL_COLOR_BUFFER_BIT);
             shouldClearInk = false;
         }
+
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+        glUseProgram(mainProgram);
+        glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBindTexture(GL_TEXTURE_2D, brushTexture);
+
+        glUniform1i(0, window_w);
+        glUniform1i(1, window_h);
+        glUniform1f(2, 1);
 
         PACKET packets[MAX_PACKETS];
         int numPackets = gpWTPacketsGet(hctx, MAX_PACKETS, (LPVOID) packets);
@@ -353,23 +408,37 @@ int main() {
                 //           "  time: " << pkt.pkTime <<
                 //           std::endl;
 
-                if (!currentStroke) {
+                if (!stroking) {
                     if (pkt.pkNormalPressure == 0) {
                         continue;
                     }
-                    strokes.emplace_back();
-                    currentStroke = &(strokes.back());
+
+                    // first point
+                    st_vec2 p = canvasPointFromPacketCoords(
+                            pkt.pkX, pkt.pkY, window_x, window_y, window_w, window_h, 1
+                    );
+                    float inkRadius = inkRadiusFromPressure(pkt.pkNormalPressure, pressure.axMax, (float) maxInkSize);
+                    st_inkData ink = {p.x, p.y, inkRadius};
+
+                    float half_size = ink.size * 0.5f;
+                    st_vec2 p1 = {ink.x - half_size, ink.y + half_size};
+                    st_vec2 p2 = {ink.x - half_size, ink.y - half_size};
+                    st_vec2 p3 = {ink.x + half_size, ink.y - half_size};
+                    st_vec2 p4 = {ink.x + half_size, ink.y + half_size};
+                    triangles.push_back({p1, 1, p2, 2, p3, 3});
+                    triangles.push_back({p1, 1, p3, 3, p4, 4});
+
+                    stroking = true;
+                    leftoverDistance = 0;
+                    prev = ink;
+                    continue;
                 }
 
                 if (pkt.pkNormalPressure == 0) {
                     // finish stroke;
-                    currentStroke = nullptr;
+                    stroking = false;
                     continue;
                 }
-
-                int window_x, window_y, window_w, window_h;
-                glfwGetWindowPos(window, &window_x, &window_y);
-                glfwGetWindowSize(window, &window_w, &window_h);
 
                 st_vec2 p = canvasPointFromPacketCoords(
                         pkt.pkX, pkt.pkY, window_x, window_y, window_w, window_h, 1
@@ -377,89 +446,66 @@ int main() {
                 float inkRadius = inkRadiusFromPressure(pkt.pkNormalPressure, pressure.axMax, (float) maxInkSize);
                 st_inkData ink = {p.x, p.y, inkRadius};
 
-                currentStroke->push_back(ink);
+                st_vec2 prev_to_curr = {ink.x - prev.x, ink.y - prev.y};
+                float dist = std::sqrt(prev_to_curr.x * prev_to_curr.x + prev_to_curr.y * prev_to_curr.y);
+                dist += leftoverDistance;
+                int count = 1;
+                while (spacing * (float) count <= dist) {
+                    float scaling = (spacing * (float) count - leftoverDistance) / dist;
+                    // point = (prev_to_curr / dist) * spacing * count
+                    float x = prev.x + prev_to_curr.x * scaling;
+                    float y = prev.y + prev_to_curr.y * scaling;
+                    float size = prev.size + (ink.size - prev.size) * scaling;
+                    float half_size = size * 0.5f;
+
+                    st_vec2 p1 = {x - half_size, y + half_size};
+                    st_vec2 p2 = {x - half_size, y - half_size};
+                    st_vec2 p3 = {x + half_size, y - half_size};
+                    st_vec2 p4 = {x + half_size, y + half_size};
+                    triangles.push_back({p1, 1, p2, 2, p3, 3});
+                    triangles.push_back({p1, 1, p3, 3, p4, 4});
+
+                    count++;
+                }
+                leftoverDistance = dist - spacing * (float) (count - 1);
+                prev = ink;
             }
         }
+        glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * 3 * triangles.size(), triangles.data(),
+                     GL_STATIC_DRAW);
+        glDrawArrays(GL_TRIANGLES, 0, 3 * triangles.size());
+        triangles.clear();
 
         if (now >= lastRender + timePerFrame) {
             lastRender = now;
 
-            int window_w, window_h;
-            glfwGetWindowSize(window, &window_w, &window_h);
+            int framebuffer_w, framebuffer_h;
+            glfwGetFramebufferSize(window, &framebuffer_w, &framebuffer_h);
 
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, framebuffer_w, framebuffer_h);
+
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glClear(GL_COLOR_BUFFER_BIT);
 
             glUseProgram(bgProgram);
-            glBindVertexArray(bg_vao);
-            glBindBuffer(GL_ARRAY_BUFFER, bg_vbo);
-            glBindTexture(GL_TEXTURE_2D, bg_texture);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(bg_vertices), bg_vertices, GL_STATIC_DRAW);
+            glBindVertexArray(bgVao);
+            glBindBuffer(GL_ARRAY_BUFFER, bgVbo);
+            glBindTexture(GL_TEXTURE_2D, bgTexture);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(bgVertices), bgVertices, GL_STATIC_DRAW);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
-            glUseProgram(mainProgram);
-            glBindVertexArray(vao);
-            glBindBuffer(GL_ARRAY_BUFFER, vbo);
-            glBindTexture(GL_TEXTURE_2D, brush_texture);
-
-            glUniform1i(0, window_w);
-            glUniform1i(1, window_h);
-            glUniform1f(2, 1);
-
-            for (int i = 0; i < strokes.size(); i++) {
-                // put triangles for each stroke
-                std::vector<st_inkData> *stroke = &strokes.at(i);
-                if (!stroke->empty()) {
-                    // draw quad centered at the first point
-                    {
-                        st_inkData ink = stroke->at(0);
-                        float half_size = ink.size * 0.5f;
-                        st_vec2 p1 = {ink.x - half_size, ink.y + half_size};
-                        st_vec2 p2 = {ink.x - half_size, ink.y - half_size};
-                        st_vec2 p3 = {ink.x + half_size, ink.y - half_size};
-                        st_vec2 p4 = {ink.x + half_size, ink.y + half_size};
-                        triangles.push_back({p1, 1, p2, 2, p3, 3});
-                        triangles.push_back({p1, 1, p3, 3, p4, 4});
-                    }
-
-                    float leftoverDistance = 0;
-                    for (int j = 1; j < stroke->size(); j++) {
-                        st_inkData prev = stroke->at(j - 1);
-                        st_inkData curr = stroke->at(j);
-                        st_vec2 prev_to_curr = {curr.x - prev.x, curr.y - prev.y};
-                        float dist = std::sqrt(prev_to_curr.x * prev_to_curr.x + prev_to_curr.y * prev_to_curr.y);
-                        dist += leftoverDistance;
-                        int count = 1;
-                        while (spacing * (float) count <= dist) {
-                            float scaling = (spacing * (float) count - leftoverDistance) / dist;
-                            // point = (prev_to_curr / dist) * spacing * count
-                            float x = prev.x + prev_to_curr.x * scaling;
-                            float y = prev.y + prev_to_curr.y * scaling;
-                            float size = prev.size + (curr.size - prev.size) * scaling;
-                            float half_size = size * 0.5f;
-
-                            st_vec2 p1 = {x - half_size, y + half_size};
-                            st_vec2 p2 = {x - half_size, y - half_size};
-                            st_vec2 p3 = {x + half_size, y - half_size};
-                            st_vec2 p4 = {x + half_size, y + half_size};
-                            triangles.push_back({p1, 1, p2, 2, p3, 3});
-                            triangles.push_back({p1, 1, p3, 3, p4, 4});
-
-                            count++;
-                        }
-                        leftoverDistance = dist - spacing * (float) (count - 1);
-                    }
-
-                    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * 3 * triangles.size(), triangles.data(),
-                                 GL_STATIC_DRAW);
-                    glDrawArrays(GL_TRIANGLES, 0, 3 * triangles.size());
-                    triangles.clear();
-                }
-            }
+            glUseProgram(bgProgram);
+            glBindVertexArray(bgVao);
+            glBindBuffer(GL_ARRAY_BUFFER, bgVbo);
+            glBindTexture(GL_TEXTURE_2D, inkLayerTexture);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(bgVertices), bgVertices, GL_STATIC_DRAW);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
 
             glUseProgram(bgProgram);
-            glBindVertexArray(bg_vao);
-            glBindBuffer(GL_ARRAY_BUFFER, bg_vbo);
-            glBindTexture(GL_TEXTURE_2D, brush_texture);
+            glBindVertexArray(bgVao);
+            glBindBuffer(GL_ARRAY_BUFFER, bgVbo);
+            glBindTexture(GL_TEXTURE_2D, brushTexture);
             glBufferData(GL_ARRAY_BUFFER, sizeof(brush_vertices), brush_vertices, GL_STATIC_DRAW);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
@@ -473,6 +519,11 @@ int main() {
         glfwPollEvents();
     }
 
+    glDeleteFramebuffers(1, &inkingFbo);
+    glDeleteVertexArrays(1, &vao);
+    glDeleteVertexArrays(1, &bgVao);
+    glDeleteBuffers(1, &vbo);
+    glDeleteBuffers(1, &bgVbo);
     glDeleteProgram(mainProgram);
     glDeleteProgram(bgProgram);
 
