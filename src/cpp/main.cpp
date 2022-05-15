@@ -37,9 +37,9 @@ struct st_shaderInfo {
 };
 
 struct st_inkData {
-    int x;
-    int y;
-    int size;
+    float x;
+    float y;
+    float size;
 };
 
 struct st_inkPoint {
@@ -51,7 +51,7 @@ const double timePerFrame = 1.0 / FRAMERATE;
 bool shouldClearInk = false;
 float inkMinSize = 5;
 float inkMaxSize = 20;
-int spacing = 1;
+float spacing = 1;
 
 int createShader(unsigned int *shader, unsigned int type, const char *file) {
     *shader = glCreateShader(type);
@@ -120,8 +120,19 @@ void processInput(GLFWwindow *window) {
     }
 }
 
-double module(double x, double y) {
+float module(float x, float y) {
     return std::sqrt(x * x + y * y);
+}
+
+void fromPacketCoordsToWindowCoords(st_inkData *inkData, int window_x, int window_y) {
+    inkData->x = inkData->x - (float) window_x;
+    inkData->y = inkData->y - (float) window_y;
+}
+
+void fromWindowCoordsToCanvasCoords(st_inkData *inkData, int canvas_x, int canvas_y, int canvas_w, int canvasWidth) {
+    // canvas aspect ratio is fixed
+    inkData->x = (inkData->x - (float) canvas_x) * (float) canvasWidth / (float) canvas_w;
+    inkData->y = (inkData->y - (float) canvas_y) * (float) canvasWidth / (float) canvas_w;
 }
 
 int main() {
@@ -309,8 +320,8 @@ int main() {
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
-    glVertexAttribIPointer(0, 3, GL_INT, 4 * sizeof(int), (void *) nullptr);
-    glVertexAttribIPointer(1, 1, GL_INT, 4 * sizeof(int), (void *) (3 * sizeof(int)));
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float) + sizeof(int), (void *) nullptr);
+    glVertexAttribIPointer(1, 1, GL_INT, 3 * sizeof(float) + sizeof(int), (void *) (3 * sizeof(float)));
 
     unsigned int bgVao, bgVbo;
     glGenVertexArrays(1, &bgVao);
@@ -326,7 +337,7 @@ int main() {
 
     std::vector<st_inkPoint> inkPoints;
     bool stroking = false;
-    double leftoverDistance = 0;
+    float leftoverDistance = 0;
     st_inkData prev = {};
 
     double lastRender = 0;
@@ -340,21 +351,19 @@ int main() {
         const double windowAspectRatio = (double) window_w / window_h;
         const double bgAspectRatio = (double) bgWidth / bgHeight;
 
-        int bg_x, bg_y, bg_w, bg_h;
+        int canvas_x, canvas_y, canvas_w, canvas_h;
 
         if (bgAspectRatio < windowAspectRatio) {
-            bg_w = window_h * bgWidth / bgHeight;
-            bg_h = window_h;
-            bg_x = (window_w - bg_w) / 2;
-            bg_y = 0;
+            canvas_w = window_h * bgWidth / bgHeight;
+            canvas_h = window_h;
+            canvas_x = (window_w - canvas_w) / 2;
+            canvas_y = 0;
         } else {
-            bg_w = window_w;
-            bg_h = window_w * bgHeight / bgWidth;
-            bg_x = 0;
-            bg_y = (window_h - bg_h) / 2;
+            canvas_w = window_w;
+            canvas_h = window_w * bgHeight / bgWidth;
+            canvas_x = 0;
+            canvas_y = (window_h - canvas_h) / 2;
         }
-
-        double canvasScale = (double) bg_w / bgWidth;
 
         processInput(window);
 
@@ -373,15 +382,11 @@ int main() {
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBindTexture(GL_TEXTURE_2D, brushTexture);
 
-        glUniform1i(0, window_x + bg_x);
-        glUniform1i(1, window_y + bg_y);
-        glUniform1i(2, bg_w);
-        glUniform1i(3, bg_h);
-        glUniform1i(4, (int) pressure.axMax);
-        glUniform1f(5, inkMinSize);
-        glUniform1f(6, inkMaxSize);
-        glUniform1i(7, bg_x);
-        glUniform1i(8, bg_y);
+        glUniform1i(0, bgWidth);
+        glUniform1i(1, bgHeight);
+        glUniform1i(2, (int) pressure.axMax);
+        glUniform1f(3, inkMinSize);
+        glUniform1f(4, inkMaxSize);
 
         PACKET packets[MAX_PACKETS];
         int numPackets = gpWTPacketsGet(hctx, MAX_PACKETS, (LPVOID) packets);
@@ -401,7 +406,9 @@ int main() {
                     }
 
                     // first point
-                    st_inkData ink = {pkt.pkX, pkt.pkY, (int) pkt.pkNormalPressure};
+                    st_inkData ink = {(float) pkt.pkX, (float) pkt.pkY, (float) pkt.pkNormalPressure};
+                    fromPacketCoordsToWindowCoords(&ink, window_x, window_y);
+                    fromWindowCoordsToCanvasCoords(&ink, canvas_x, canvas_y, canvas_w, bgWidth);
                     inkPoints.push_back({ink, 1});
                     inkPoints.push_back({ink, 2});
                     inkPoints.push_back({ink, 3});
@@ -421,17 +428,19 @@ int main() {
                     continue;
                 }
 
-                st_inkData ink = {pkt.pkX, pkt.pkY, (int) pkt.pkNormalPressure};
+                st_inkData ink = {(float) pkt.pkX, (float) pkt.pkY, (float) pkt.pkNormalPressure};
+                fromPacketCoordsToWindowCoords(&ink, window_x, window_y);
+                fromWindowCoordsToCanvasCoords(&ink, canvas_x, canvas_y, canvas_w, bgWidth);
 
-                double dist = module(ink.x - prev.x, ink.y - prev.y);
-                int count = 1;
+                float dist = module(ink.x - prev.x, ink.y - prev.y);
+                float count = 1;
                 while (spacing * count <= dist + leftoverDistance) {
-                    double scaling = (spacing * count - leftoverDistance) / dist;
+                    float scaling = (spacing * count - leftoverDistance) / dist;
                     // point = (prev_to_curr / dist) * spacing * count
                     st_inkData fillerInk = {
-                            (int) (prev.x + (ink.x - prev.x) * scaling),
-                            (int) (prev.y + (ink.y - prev.y) * scaling),
-                            (int) (prev.size + (ink.size - prev.size) * scaling)
+                            prev.x + (ink.x - prev.x) * scaling,
+                            prev.y + (ink.y - prev.y) * scaling,
+                            prev.size + (ink.size - prev.size) * scaling
                     };
                     inkPoints.push_back({fillerInk, 1});
                     inkPoints.push_back({fillerInk, 2});
@@ -458,12 +467,12 @@ int main() {
             glfwGetFramebufferSize(window, &framebuffer_w, &framebuffer_h);
 
             const int bgVertices[] = {
-                    bg_x, bg_y, 0, 1,
-                    bg_x, bg_y + bg_h, 0, 0,
-                    bg_x + bg_w, bg_y + bg_h, 1, 0,
-                    bg_x, bg_y, 0, 1,
-                    bg_x + bg_w, bg_y + bg_h, 1, 0,
-                    bg_x + bg_w, bg_y, 1, 1
+                    canvas_x, canvas_y, 0, 1,
+                    canvas_x, canvas_y + canvas_h, 0, 0,
+                    canvas_x + canvas_w, canvas_y + canvas_h, 1, 0,
+                    canvas_x, canvas_y, 0, 1,
+                    canvas_x + canvas_w, canvas_y + canvas_h, 1, 0,
+                    canvas_x + canvas_w, canvas_y, 1, 1
             };
 
             const int brushVertices[] = {
