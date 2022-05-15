@@ -37,29 +37,21 @@ struct st_shaderInfo {
 };
 
 struct st_inkData {
-    float x;
-    float y;
-    float size;
+    int x;
+    int y;
+    int size;
 };
 
-struct st_vec2 {
-    float x;
-    float y;
-};
-
-struct st_triangle {
-    st_vec2 p1;
-    float p1_i;
-    st_vec2 p2;
-    float p2_i;
-    st_vec2 p3;
-    float p3_i;
+struct st_inkPoint {
+    st_inkData inkData;
+    int inkPointIndex;
 };
 
 const double timePerFrame = 1.0 / FRAMERATE;
 bool shouldClearInk = false;
-int maxInkSize = 10;
-float spacing = 1;
+float inkMinSize = 5;
+float inkMaxSize = 20;
+int spacing = 1;
 
 int createShader(unsigned int *shader, unsigned int type, const char *file) {
     *shader = glCreateShader(type);
@@ -128,18 +120,8 @@ void processInput(GLFWwindow *window) {
     }
 }
 
-st_vec2 canvasPointFromPacketCoords(
-        int raw_x, int raw_y, int window_x, int window_y, int window_w, int window_h, float scale
-) {
-    float x_canvas = ((float) (raw_x - window_x) - (float) window_w / 2) * scale;
-    float y_canvas = -((float) (raw_y - window_y) - (float) window_h / 2) * scale;
-
-    return {x_canvas, y_canvas};
-}
-
-float inkRadiusFromPressure(float pressure, float maxPressure, float maxSize) {
-    float minSize = maxSize / 10;
-    return minSize + pressure * (maxSize - minSize) / maxPressure;
+double module(double x, double y) {
+    return std::sqrt(x * x + y * y);
 }
 
 int main() {
@@ -153,7 +135,6 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
 
     GLFWwindow *window = glfwCreateWindow(WIDTH, HEIGHT, "Blue Archive Notes", nullptr, nullptr);
@@ -328,8 +309,8 @@ int main() {
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *) nullptr);
-    glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *) (2 * sizeof(float)));
+    glVertexAttribIPointer(0, 3, GL_INT, 4 * sizeof(int), (void *) nullptr);
+    glVertexAttribIPointer(1, 1, GL_INT, 4 * sizeof(int), (void *) (3 * sizeof(int)));
 
     unsigned int bgVao, bgVbo;
     glGenVertexArrays(1, &bgVao);
@@ -362,9 +343,9 @@ int main() {
             (525 + 100) * 2. / WIDTH, (340 + 100) * 2. / HEIGHT, 1, 1
     };
 
-    std::vector<st_triangle> triangles;
+    std::vector<st_inkPoint> inkPoints;
     bool stroking = false;
-    float leftoverDistance = 0;
+    double leftoverDistance = 0;
     st_inkData prev = {};
 
     double lastRender = 0;
@@ -392,9 +373,13 @@ int main() {
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBindTexture(GL_TEXTURE_2D, brushTexture);
 
-        glUniform1i(0, window_w);
-        glUniform1i(1, window_h);
-        glUniform1f(2, 1);
+        glUniform1i(0, window_x);
+        glUniform1i(1, window_y);
+        glUniform1i(2, window_w);
+        glUniform1i(3, window_h);
+        glUniform1i(4, (int) pressure.axMax);
+        glUniform1f(5, inkMinSize);
+        glUniform1f(6, inkMaxSize);
 
         PACKET packets[MAX_PACKETS];
         int numPackets = gpWTPacketsGet(hctx, MAX_PACKETS, (LPVOID) packets);
@@ -414,19 +399,13 @@ int main() {
                     }
 
                     // first point
-                    st_vec2 p = canvasPointFromPacketCoords(
-                            pkt.pkX, pkt.pkY, window_x, window_y, window_w, window_h, 1
-                    );
-                    float inkRadius = inkRadiusFromPressure(pkt.pkNormalPressure, pressure.axMax, (float) maxInkSize);
-                    st_inkData ink = {p.x, p.y, inkRadius};
-
-                    float half_size = ink.size * 0.5f;
-                    st_vec2 p1 = {ink.x - half_size, ink.y + half_size};
-                    st_vec2 p2 = {ink.x - half_size, ink.y - half_size};
-                    st_vec2 p3 = {ink.x + half_size, ink.y - half_size};
-                    st_vec2 p4 = {ink.x + half_size, ink.y + half_size};
-                    triangles.push_back({p1, 1, p2, 2, p3, 3});
-                    triangles.push_back({p1, 1, p3, 3, p4, 4});
+                    st_inkData ink = {pkt.pkX, pkt.pkY, (int) pkt.pkNormalPressure};
+                    inkPoints.push_back({ink, 1});
+                    inkPoints.push_back({ink, 2});
+                    inkPoints.push_back({ink, 3});
+                    inkPoints.push_back({ink, 1});
+                    inkPoints.push_back({ink, 3});
+                    inkPoints.push_back({ink, 4});
 
                     stroking = true;
                     leftoverDistance = 0;
@@ -440,41 +419,35 @@ int main() {
                     continue;
                 }
 
-                st_vec2 p = canvasPointFromPacketCoords(
-                        pkt.pkX, pkt.pkY, window_x, window_y, window_w, window_h, 1
-                );
-                float inkRadius = inkRadiusFromPressure(pkt.pkNormalPressure, pressure.axMax, (float) maxInkSize);
-                st_inkData ink = {p.x, p.y, inkRadius};
+                st_inkData ink = {pkt.pkX, pkt.pkY, (int) pkt.pkNormalPressure};
 
-                st_vec2 prev_to_curr = {ink.x - prev.x, ink.y - prev.y};
-                float dist = std::sqrt(prev_to_curr.x * prev_to_curr.x + prev_to_curr.y * prev_to_curr.y);
-                dist += leftoverDistance;
+                double dist = module(ink.x - prev.x, ink.y - prev.y);
                 int count = 1;
-                while (spacing * (float) count <= dist) {
-                    float scaling = (spacing * (float) count - leftoverDistance) / dist;
+                while (spacing * count <= dist + leftoverDistance) {
+                    double scaling = (spacing * count - leftoverDistance) / dist;
                     // point = (prev_to_curr / dist) * spacing * count
-                    float x = prev.x + prev_to_curr.x * scaling;
-                    float y = prev.y + prev_to_curr.y * scaling;
-                    float size = prev.size + (ink.size - prev.size) * scaling;
-                    float half_size = size * 0.5f;
-
-                    st_vec2 p1 = {x - half_size, y + half_size};
-                    st_vec2 p2 = {x - half_size, y - half_size};
-                    st_vec2 p3 = {x + half_size, y - half_size};
-                    st_vec2 p4 = {x + half_size, y + half_size};
-                    triangles.push_back({p1, 1, p2, 2, p3, 3});
-                    triangles.push_back({p1, 1, p3, 3, p4, 4});
+                    st_inkData fillerInk = {
+                            (int) (prev.x + (ink.x - prev.x) * scaling),
+                            (int) (prev.y + (ink.y - prev.y) * scaling),
+                            (int) (prev.size + (ink.size - prev.size) * scaling)
+                    };
+                    inkPoints.push_back({fillerInk, 1});
+                    inkPoints.push_back({fillerInk, 2});
+                    inkPoints.push_back({fillerInk, 3});
+                    inkPoints.push_back({fillerInk, 1});
+                    inkPoints.push_back({fillerInk, 3});
+                    inkPoints.push_back({fillerInk, 4});
 
                     count++;
                 }
-                leftoverDistance = dist - spacing * (float) (count - 1);
+                leftoverDistance += dist - spacing * (count - 1);
                 prev = ink;
             }
         }
-        glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 3 * 3 * triangles.size(), triangles.data(),
+        glBufferData(GL_ARRAY_BUFFER, sizeof(int) * 4 * inkPoints.size(), inkPoints.data(),
                      GL_STATIC_DRAW);
-        glDrawArrays(GL_TRIANGLES, 0, 3 * triangles.size());
-        triangles.clear();
+        glDrawArrays(GL_TRIANGLES, 0, (int) inkPoints.size());
+        inkPoints.clear();
 
         if (now >= lastRender + timePerFrame) {
             lastRender = now;
