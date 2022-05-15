@@ -11,6 +11,9 @@ layout (location = 4) uniform int maxPressure;
 layout (location = 5) uniform float inkMinSize;
 layout (location = 6) uniform float inkMaxSize;
 
+layout (location = 7) uniform int bg_x;
+layout (location = 8) uniform int bg_y;
+
 out vec2 uv;
 
 void main() {

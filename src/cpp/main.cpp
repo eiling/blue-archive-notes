@@ -321,27 +321,8 @@ int main() {
 
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *) nullptr);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *) (2 * sizeof(float)));
-
-    const float bgVertices[] = {
-            -1, 1, 0, 1,
-            -1, -1, 0, 0,
-            1, -1, 1, 0,
-            -1, 1, 0, 1,
-            1, -1, 1, 0,
-            1, 1, 1, 1
-    };
-    // glBufferData(GL_ARRAY_BUFFER, sizeof(bgVertices), bgVertices, GL_STATIC_DRAW);
-
-    const float brush_vertices[] = {
-            (525 - 100) * 2. / WIDTH, (340 + 100) * 2. / HEIGHT, 0, 1,
-            (525 - 100) * 2. / WIDTH, (340 - 100) * 2. / HEIGHT, 0, 0,
-            (525 + 100) * 2. / WIDTH, (340 - 100) * 2. / HEIGHT, 1, 0,
-            (525 - 100) * 2. / WIDTH, (340 + 100) * 2. / HEIGHT, 0, 1,
-            (525 + 100) * 2. / WIDTH, (340 - 100) * 2. / HEIGHT, 1, 0,
-            (525 + 100) * 2. / WIDTH, (340 + 100) * 2. / HEIGHT, 1, 1
-    };
+    glVertexAttribIPointer(0, 2, GL_INT, 4 * sizeof(int), (void *) nullptr);
+    glVertexAttribIPointer(1, 2, GL_INT, 4 * sizeof(int), (void *) (2 * sizeof(int)));
 
     std::vector<st_inkPoint> inkPoints;
     bool stroking = false;
@@ -355,6 +336,25 @@ int main() {
         int window_x, window_y, window_w, window_h;
         glfwGetWindowPos(window, &window_x, &window_y);
         glfwGetWindowSize(window, &window_w, &window_h);
+
+        const double windowAspectRatio = (double) window_w / window_h;
+        const double bgAspectRatio = (double) bgWidth / bgHeight;
+
+        int bg_x, bg_y, bg_w, bg_h;
+
+        if (bgAspectRatio < windowAspectRatio) {
+            bg_w = window_h * bgWidth / bgHeight;
+            bg_h = window_h;
+            bg_x = (window_w - bg_w) / 2;
+            bg_y = 0;
+        } else {
+            bg_w = window_w;
+            bg_h = window_w * bgHeight / bgWidth;
+            bg_x = 0;
+            bg_y = (window_h - bg_h) / 2;
+        }
+
+        double canvasScale = (double) bg_w / bgWidth;
 
         processInput(window);
 
@@ -373,13 +373,15 @@ int main() {
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBindTexture(GL_TEXTURE_2D, brushTexture);
 
-        glUniform1i(0, window_x);
-        glUniform1i(1, window_y);
-        glUniform1i(2, window_w);
-        glUniform1i(3, window_h);
+        glUniform1i(0, window_x + bg_x);
+        glUniform1i(1, window_y + bg_y);
+        glUniform1i(2, bg_w);
+        glUniform1i(3, bg_h);
         glUniform1i(4, (int) pressure.axMax);
         glUniform1f(5, inkMinSize);
         glUniform1f(6, inkMaxSize);
+        glUniform1i(7, bg_x);
+        glUniform1i(8, bg_y);
 
         PACKET packets[MAX_PACKETS];
         int numPackets = gpWTPacketsGet(hctx, MAX_PACKETS, (LPVOID) packets);
@@ -455,6 +457,24 @@ int main() {
             int framebuffer_w, framebuffer_h;
             glfwGetFramebufferSize(window, &framebuffer_w, &framebuffer_h);
 
+            const int bgVertices[] = {
+                    bg_x, bg_y, 0, 1,
+                    bg_x, bg_y + bg_h, 0, 0,
+                    bg_x + bg_w, bg_y + bg_h, 1, 0,
+                    bg_x, bg_y, 0, 1,
+                    bg_x + bg_w, bg_y + bg_h, 1, 0,
+                    bg_x + bg_w, bg_y, 1, 1
+            };
+
+            const int brushVertices[] = {
+                    window_w - 200, 25, 0, 1,
+                    window_w - 200, 200, 0, 0,
+                    window_w - 25, 200, 1, 0,
+                    window_w - 200, 25, 0, 1,
+                    window_w - 25, 200, 1, 0,
+                    window_w - 25, 25, 1, 1
+            };
+
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(0, 0, framebuffer_w, framebuffer_h);
 
@@ -464,22 +484,20 @@ int main() {
             glUseProgram(bgProgram);
             glBindVertexArray(bgVao);
             glBindBuffer(GL_ARRAY_BUFFER, bgVbo);
+
+            glUniform1i(0, window_w);
+            glUniform1i(1, window_h);
+
             glBindTexture(GL_TEXTURE_2D, bgTexture);
             glBufferData(GL_ARRAY_BUFFER, sizeof(bgVertices), bgVertices, GL_STATIC_DRAW);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
-            glUseProgram(bgProgram);
-            glBindVertexArray(bgVao);
-            glBindBuffer(GL_ARRAY_BUFFER, bgVbo);
             glBindTexture(GL_TEXTURE_2D, inkLayerTexture);
             glBufferData(GL_ARRAY_BUFFER, sizeof(bgVertices), bgVertices, GL_STATIC_DRAW);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
-            glUseProgram(bgProgram);
-            glBindVertexArray(bgVao);
-            glBindBuffer(GL_ARRAY_BUFFER, bgVbo);
             glBindTexture(GL_TEXTURE_2D, brushTexture);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(brush_vertices), brush_vertices, GL_STATIC_DRAW);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(brushVertices), brushVertices, GL_STATIC_DRAW);
             glDrawArrays(GL_TRIANGLES, 0, 6);
 
             glfwSwapBuffers(window);
