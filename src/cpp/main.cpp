@@ -390,6 +390,9 @@ int main() {
 
         PACKET packets[MAX_PACKETS];
         int numPackets = gpWTPacketsGet(hctx, MAX_PACKETS, (LPVOID) packets);
+        if (numPackets >= MAX_PACKETS - 5) {
+            std::cout << "Packets received: " << numPackets << std::endl;
+        }
         if (numPackets > 0) {
             for (int i = 0; i < numPackets; i++) {
                 PACKET pkt = packets[i];
