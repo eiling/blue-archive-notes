@@ -9,7 +9,7 @@ Note: given my abysmal knowledge of OpenGL and platform specific stuff, it's ver
 ## Goals
 
 - Learn how to model and render digital ink
-- Learn how to integrate OpenGL with other
+- Learn how to integrate OpenGL with other stuff
 - Improve my C++ (or at least stop getting segfaults all the time)
 - Make a cute notes app for personal use
 
